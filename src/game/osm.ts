@@ -75,7 +75,7 @@ const R = 6378137
 
 export async function searchPlaces(query: string, signal?: AbortSignal): Promise<Place[]> {
   const url =
-    'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=' + encodeURIComponent(query)
+    'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=3&q=' + encodeURIComponent(query)
   const res = await fetch(url, { headers: { Accept: 'application/json' }, signal })
   if (!res.ok) throw new Error(`Place search failed (${res.status})`)
   const rows = (await res.json()) as { display_name: string; lat: string; lon: string }[]

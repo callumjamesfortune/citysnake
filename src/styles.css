@@ -43,9 +43,11 @@ canvas {
 
 .overlay {
   position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 20vh;
   inset: 0;
-  display: grid;
-  place-items: center;
   background: rgba(13, 17, 23, 0.7);
   color: #e6edf3;
   text-align: center;
@@ -55,9 +57,88 @@ canvas {
   margin-top: 16px;
   padding: 10px 20px;
   font-size: 15px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: #238636;
-  color: white;
   cursor: pointer;
+}
+
+.place-button {
+  border: 1px solid white;
+  background: none;
+  color: white
+}
+
+.start-screen {
+  width: 50vw;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: start;
+  gap: 16px;
+}
+
+.start-screen h1 {
+  font-size: 5rem;
+  margin: 0;
+}
+
+.search-box {
+  display: flex;
+  gap: 8px;
+}
+
+.search-box button {
+  margin: 0;
+  padding: 10px;
+  font-size: 1.2rem;
+  color: white;
+  border: 1px solid white;
+  background: none;
+  cursor: pointer;
+  aspect-ratio: 1/1;
+}
+
+.search-box input[type='text'] {
+  font-size: 1.2rem;
+  padding: 10px;
+  border: 1px solid white;
+  background: #161b22;
+  color: #e6edf3;
+  outline: none;
+  flex-grow: 1;
+}
+
+.place-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.play-button {
+  background: green;
+  color: rgb(1, 29, 1)
+}
+
+.overlay .dead-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.overlay .dead-screen h2 {
+  font-size: 6rem;
+  margin: 0;
+}
+
+.overlay .dead-screen p {
+  font-size: 1.6rem;
+  margin: 0;
+}
+
+.overlay .dead-screen button {
+  background: green;
+  color: rgb(0, 27, 0);
+  font-size: 1.6rem;
+  padding: 10px 20px;
 }

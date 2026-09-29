@@ -41,7 +41,7 @@ export default function GameCanvas() {
         setSearching(true)
 
         const results = await searchPlaces(query, controller.signal)
-        setPlaces(results)
+        setPlaces(results.slice(0, 3))
       } catch (e) {
         if ((e as Error).name !== 'AbortError') {
           console.error(e)
@@ -211,32 +211,41 @@ const startGame = async () => {
     return (
       <div className="overlay">
         <div className="start-screen">
-          <h1>Snake Roads</h1>
+          <h1>CitySnake</h1>
 
-          <p>Choose a town to play in</p>
+          <p>Choose a location to play</p>
 
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value)
+          <div className="search-box">
+
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setSelectedPlace(undefined)
+                setError(undefined)
+              }}
+              placeholder="Search for a town..."
+              autoFocus
+            />
+
+            <button onClick={() => {
+              setQuery('')
               setSelectedPlace(undefined)
+              setPlaces([])
               setError(undefined)
-            }}
-            placeholder="Search for a town..."
-            autoFocus
-          />
+            }}>✕</button>
+
+          </div>
 
           {searching && <p>Searching…</p>}
 
-          {places.length > 0 && (
+          {!selectedPlace && places.length > 0 && (
             <div className="place-list">
               {places.map((place, index) => (
                 <button
                   key={`${place.lat}-${place.lon}-${index}`}
-                  className={
-                    selectedPlace === place ? 'selected' : ''
-                  }
+                  className="place-button"
                   onClick={() => {
                     setSelectedPlace(place)
                     setQuery(place.name)
@@ -334,7 +343,7 @@ const startGame = async () => {
 
       {!hud.alive && (
         <div className="overlay">
-          <div>
+          <div className="dead-screen">
             <h2>
               {hud.cause === 'dead-end'
                 ? 'Dead end'
