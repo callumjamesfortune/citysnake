@@ -33,17 +33,6 @@ const COLORS = {
   label: '#8b96a8',
 }
 
-/** Road fill colour per OSM class, biggest first. */
-const ROAD_FILL = [
-  '#7a6234',
-  '#7a5b40',
-  '#5b5f74',
-  '#4c5366',
-  '#454c5d',
-  '#3b4250',
-  '#333944',
-]
-
 const ROAD_WIDTH = [16, 14, 12, 10, 9, 7, 5]
 
 function bbox(g: Float64Array): Float64Array {
