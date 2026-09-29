@@ -78,6 +78,7 @@ export class MapLayer {
     ctx.lineWidth = Math.max(2 / zoom, 3)
     for (const l of this.lines) {
       if (!visible(l.box, v)) continue
+      ctx.beginPath()
       trace(ctx, l.g)
       ctx.stroke()
     }
@@ -98,13 +99,12 @@ export class MapLayer {
     zoom = 1,
   ) {
     ctx.fillStyle = fill
-    ctx.beginPath()
     for (const s of shapes) {
       if (!visible(s.box, v)) continue
+      ctx.beginPath()
       trace(ctx, s.g)
-      ctx.closePath()
+      ctx.fill()
     }
-    ctx.fill()
     if (edge) {
       ctx.strokeStyle = edge
       ctx.lineWidth = 1 / zoom
@@ -117,14 +117,12 @@ export class MapLayer {
       const width = Math.max(ROAD_WIDTH[k], 3 / zoom)
       ctx.lineWidth = casing ? width + Math.max(2, 2 / zoom) : width
       ctx.strokeStyle = casing ? COLORS.casing : ROAD_FILL[k]
-      ctx.beginPath()
-      let any = false
       for (const r of this.roads[k]) {
         if (!visible(r.box, v)) continue
+        ctx.beginPath()
         trace(ctx, r.g)
-        any = true
+        ctx.stroke()
       }
-      if (any) ctx.stroke()
     }
   }
 
