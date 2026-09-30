@@ -25,11 +25,6 @@ export const CITY_MAPS: CityMap[] = [
     file: `${MAP_BASE}norwich.json`,
   },
   {
-    id: 'manchester',
-    name: 'Manchester',
-    file: `${MAP_BASE}manchester.json`,
-  },
-  {
     id: 'preston',
     name: 'Preston',
     file: `${MAP_BASE}preston.json`,

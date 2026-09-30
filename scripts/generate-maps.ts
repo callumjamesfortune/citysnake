@@ -40,13 +40,6 @@ const cities: {
     lat: 53.1909,
     lon: -2.8909,
     radius: 6000,
-  },
-  {
-    id: 'manchester',
-    name: 'Manchester',
-    lat: 53.4798,
-    lon: -2.2428,
-    radius: 12000,
   }
 ]
 
