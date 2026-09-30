@@ -1,18 +1,22 @@
 import type {
   Link,
   RoadNetwork,
-  RoadTarget,
 } from './RoadNetwork'
 import type { Point } from './types'
 
 const SEGMENT_SPACING = 4.5
 const BASE_SPEED = 52
 const BOOST_SPEED = 88
+const FREE_BOOST_SPEED = 250
 const BOOST_COST = 9
 const MIN_SEGMENTS = 10
 
 /** Segments near the head are exempt from self-collision. */
 const NECK = 14
+
+const STRAIGHT_ANGLE = Math.PI * 0.2 // 36 degrees
+
+export type TurnDirection = -1 | 0 | 1
 
 export type DeathCause =
   | 'self'
@@ -27,15 +31,10 @@ export class Snake {
 
   segmentCount = 18
   boosting = false
+  freeBoosting = false
   alive = true
   cause?: DeathCause
   segments: Point[] = []
-
-  /** World-space position of the cursor. */
-  cursor: Point = {
-    x: 0,
-    y: 0,
-  }
 
   nextJunction: Point | null = null
 
@@ -43,15 +42,20 @@ export class Snake {
   private dist = 0
   private trail: Point[]
 
-  private target: RoadTarget | null = null
-  private route: Link[] = []
+  /**
+   * The player's requested direction for the next junction.
+   *
+   * -1 = left
+   *  0 = straight
+   *  1 = right
+   */
+  private pendingTurn: TurnDirection | null = null
 
   constructor(
     private net: RoadNetwork,
     startEdge: number,
   ) {
-    const edge =
-      net.edges[startEdge]
+    const edge = net.edges[startEdge]
 
     const aLinks =
       net.links[edge.a]
@@ -59,6 +63,10 @@ export class Snake {
     const bLinks =
       net.links[edge.b]
 
+    /*
+     * Prefer starting toward a junction rather than
+     * immediately heading toward a dead end.
+     */
     if (
       aLinks.length > 1 &&
       bLinks.length <= 1
@@ -105,23 +113,24 @@ export class Snake {
             y: -s.hy,
           }
 
-    this.cursor = {
-      ...this.head,
-    }
-
     this.trail = [
       { ...this.head },
     ]
 
     this.resample()
+
+    this.nextJunction =
+      this.net.vertexPoint(
+        this.net.endVertex(
+          this.link,
+        ),
+      )
   }
 
-  setCursor(point: Point) {
-    this.cursor = {
-      ...point,
-    }
-
-    this.updateRoute()
+  setTurn(
+    direction: TurnDirection,
+  ) {
+    this.pendingTurn = direction
   }
 
   get radius(): number {
@@ -129,17 +138,20 @@ export class Snake {
       2.6 +
       Math.sqrt(
         this.segmentCount,
-      ) *
-        0.35
+      ) * 0.35
     )
   }
 
   get speed(): number {
-    return this.boosting &&
-      this.segmentCount >
-        MIN_SEGMENTS
-      ? BOOST_SPEED
-      : BASE_SPEED
+    if (this.freeBoosting) {
+      return FREE_BOOST_SPEED
+    }
+  
+    if (this.boosting) {
+      return BOOST_SPEED
+    }
+  
+    return BASE_SPEED
   }
 
   get currentRoad():
@@ -159,8 +171,8 @@ export class Snake {
 
     if (
       this.boosting &&
-      this.segmentCount >
-        MIN_SEGMENTS
+      !this.freeBoosting &&
+      this.segmentCount > MIN_SEGMENTS
     ) {
       this.segmentCount =
         Math.max(
@@ -242,7 +254,7 @@ export class Snake {
   }
 
   /**
-   * Move forward along the current route.
+   * Move forward along the road network.
    */
   private advance(
     distance: number,
@@ -263,9 +275,7 @@ export class Snake {
         edge.length -
         this.dist
 
-      if (
-        remaining < room
-      ) {
+      if (remaining < room) {
         this.dist += remaining
         return
       }
@@ -276,13 +286,8 @@ export class Snake {
         this.chooseNext()
 
       if (!next) {
-        this.dist =
-          edge.length
-
-        this.kill(
-          'dead-end',
-        )
-
+        this.dist = edge.length
+        this.kill('dead-end')
         return
       }
 
@@ -290,309 +295,574 @@ export class Snake {
       this.dist = 0
 
       /*
-       * We've consumed the first link
-       * in the cached route.
+       * We have passed the junction.
+       * The turn command is deliberately one-shot,
+       * so chooseNext() has already consumed it.
        */
-      if (
-        this.route.length > 0 &&
-        this.sameLink(
-          this.route[0],
-          next,
-        )
-      ) {
-        this.route.shift()
-      }
-
-      /*
-       * Recalculate because the snake has
-       * moved to a new junction.
-       */
-      this.updateRoute()
     }
   }
 
+  /**
+   * Choose which road to take at the next junction.
+   */
   private chooseNext():
-    | Link
-    | null {
-    if (
-      this.route.length > 0
-    ) {
-      return this.route[0]
-    }
+  | Link
+  | null {
+  const vertex =
+    this.net.endVertex(
+      this.link,
+    )
 
-    /*
-     * If the cursor is on the current
-     * road ahead of us, continue forward.
-     */
-    const target = this.target
+  const candidates =
+    this.getLegalLinks(vertex)
 
-    if (
-      target &&
-      target.edge ===
-        this.link.edge
-    ) {
-      const targetDist =
-        this.link.dir === 1
-          ? target.dist
-          : this.net.edges[
-              this.link.edge
-            ].length -
-            target.dist
-
-      if (
-        targetDist >
-        this.dist
-      ) {
-        return null
-      }
-    }
-
+  if (candidates.length === 0) {
     return null
   }
 
-  /**
-   * Find the nearest road point to the cursor
-   * and calculate the shortest graph route to it.
+  const turn =
+    this.pendingTurn
+
+  /*
+   * A left/right command stays pending until
+   * we actually reach a junction where that
+   * direction is available.
    */
-  private updateRoute() {
-    const target =
-      this.net.nearestRoadPoint(
-        this.cursor.x,
-        this.cursor.y,
-      )
+  if (
+    turn !== null &&
+    turn !== 0 &&
+    !this.hasTurnOption(
+      candidates,
+      turn,
+    )
+  ) {
+    return this.selectLink(
+      candidates,
+      0,
+    )
+  }
 
-    this.target = target
+  const selected =
+    this.selectLink(
+      candidates,
+      turn ?? 0,
+    )
 
-    if (!target) {
-      this.route = []
-      return
+  /*
+   * The command has now been used.
+   */
+  this.pendingTurn = null
+
+  return selected
+}
+
+  /**
+   * Get all roads leaving the junction except
+   * the road we just came from in reverse.
+   */
+  private getLegalLinks(
+    vertex: number,
+  ): Link[] {
+    return this.net.links[
+      vertex
+    ].filter(
+      (candidate) =>
+        !(
+          candidate.edge ===
+            this.link.edge &&
+          candidate.dir ===
+            -this.link.dir
+        ),
+    )
+  }
+
+  private hasTurnOption(
+    candidates: Link[],
+    turn: TurnDirection,
+  ): boolean {
+    if (turn === 0) {
+      return true
     }
-
-    const currentEdge =
-      this.net.edges[
-        this.link.edge
-      ]
-
-    /*
-     * If target is ahead on the current road,
-     * no junction routing is needed.
-     */
-    if (
-      target.edge ===
-      this.link.edge
-    ) {
-      const targetDist =
-        this.link.dir === 1
-          ? target.dist
-          : currentEdge.length -
-            target.dist
-
-      if (
-        targetDist >= this.dist
-      ) {
-        this.route = []
-        return
-      }
-    }
-
-    const startVertex =
-      this.net.endVertex(
+  
+    const forward =
+      this.net.arrivalHeading(
         this.link,
       )
-
-    let bestRoute:
-      | {
-          route: Link[]
-          cost: number
-        }
-      | null = null
-
-    /*
-     * The target road can be approached
-     * from either end.
-     */
-    const targetEdge =
-      this.net.edges[
-        target.edge
-      ]
-
-    const approaches = [
-      {
-        vertex: targetEdge.a,
-        targetCost: target.dist,
+  
+    return candidates.some(
+      (candidate) => {
+        const outgoing =
+          this.net.exitHeading(
+            candidate,
+          )
+  
+        const cross =
+          forward.x * outgoing.y -
+          forward.y * outgoing.x
+  
+        const dot =
+          forward.x * outgoing.x +
+          forward.y * outgoing.y
+  
+        const angle =
+          Math.atan2(
+            cross,
+            dot,
+          )
+  
+        return turn < 0
+          ? angle < -STRAIGHT_ANGLE
+          : angle > STRAIGHT_ANGLE
       },
-      {
-        vertex: targetEdge.b,
-        targetCost:
-          targetEdge.length -
-          target.dist,
-      },
-    ]
-
-    for (
-      const approach of approaches
-    ) {
-      const route =
-        this.net.shortestPath(
-          startVertex,
-          approach.vertex,
-        )
-
-      if (!route) continue
-
-      const currentRemaining =
-        currentEdge.length -
-        this.dist
-
-      const cost =
-        currentRemaining +
-        route.reduce(
-          (sum, link) =>
-            sum +
-            this.net.edges[
-              link.edge
-            ].length,
-          0,
-        ) +
-        approach.targetCost
-
-      if (
-        !bestRoute ||
-        cost <
-          bestRoute.cost
-      ) {
-        bestRoute = {
-          route,
-          cost,
-        }
-      }
-    }
-
-    this.route =
-      bestRoute?.route ?? []
+    )
   }
 
   /**
-   * Project the exact route the snake is
-   * currently going to take.
+   * Pick the road that best matches the requested
+   * left / straight / right direction.
+   *
+   * World coordinates use screen-style Y-down
+   * coordinates, so negative angles are left.
+   */
+  private selectLink(
+    candidates: Link[],
+    turn: TurnDirection,
+  ): Link {
+    const forward =
+      this.net.arrivalHeading(
+        this.link,
+      )
+
+    const scored = candidates.map(
+      (candidate) => {
+        const outgoing =
+          this.net.exitHeading(
+            candidate,
+          )
+
+        const cross =
+          forward.x * outgoing.y -
+          forward.y * outgoing.x
+
+        const dot =
+          forward.x * outgoing.x +
+          forward.y * outgoing.y
+
+        const angle =
+          Math.atan2(
+            cross,
+            dot,
+          )
+
+        return {
+          link: candidate,
+          angle,
+        }
+      },
+    )
+
+    /*
+     * Straight:
+     * choose the road closest to our current heading.
+     */
+    if (turn === 0) {
+      return scored.reduce(
+        (best, current) =>
+          Math.abs(current.angle) <
+          Math.abs(best.angle)
+            ? current
+            : best,
+      ).link
+    }
+
+    /*
+     * Left/right:
+     * first look for an actual turn in the
+     * requested direction.
+     */
+    const sideCandidates =
+      scored.filter((item) =>
+        turn < 0
+          ? item.angle <
+            -STRAIGHT_ANGLE
+          : item.angle >
+            STRAIGHT_ANGLE,
+      )
+
+    if (sideCandidates.length > 0) {
+      const desired =
+        turn < 0
+          ? -Math.PI / 2
+          : Math.PI / 2
+
+      return sideCandidates.reduce(
+        (best, current) =>
+          Math.abs(
+            current.angle -
+              desired,
+          ) <
+          Math.abs(
+            best.angle -
+              desired,
+          )
+            ? current
+            : best,
+      ).link
+    }
+
+    /*
+     * No road in the requested direction.
+     * Prefer straight instead of making an
+     * unexpected turn.
+     */
+    const straightCandidates =
+      scored.filter(
+        (item) =>
+          Math.abs(item.angle) <=
+          STRAIGHT_ANGLE,
+      )
+
+    if (
+      straightCandidates.length > 0
+    ) {
+      return straightCandidates.reduce(
+        (best, current) =>
+          Math.abs(current.angle) <
+          Math.abs(best.angle)
+            ? current
+            : best,
+      ).link
+    }
+
+    /*
+     * No straight road either.
+     * Take the closest available option
+     * to the requested direction.
+     */
+    const desired =
+      turn < 0
+        ? -Math.PI / 2
+        : Math.PI / 2
+
+    return scored.reduce(
+      (best, current) =>
+        Math.abs(
+          current.angle -
+            desired,
+        ) <
+        Math.abs(
+          best.angle -
+            desired,
+        )
+          ? current
+          : best,
+    ).link
+  }
+
+  /**
+   * Project the route the snake will actually take.
+   *
+   * This does NOT perform pathfinding.
+   * It simply follows the same junction-selection
+   * rules used by the real snake.
    */
   getProjectedPath(
-    maxDistance = 180,
+    maxDistance = 500,
   ): Point[] {
     const path: Point[] = [
       { ...this.head },
     ]
-
+  
     let link = {
       ...this.link,
     }
-
+  
     let dist = this.dist
     let travelled = 0
-    let route = [
-      ...this.route,
-    ]
-
-    const target = this.target
-
+  
+    /*
+     * Keep the player's requested direction alive
+     * until a junction actually offers that turn.
+     */
+    let turn =
+      this.pendingTurn ?? 0
+  
     let guard = 0
-
+  
     while (
-      travelled <
-        maxDistance &&
+      travelled < maxDistance &&
       guard++ < 32
     ) {
       const edge =
         this.net.edges[
           link.edge
         ]
-
-      /*
-       * If we're on the target edge,
-       * stop at the target point.
-       */
-      if (
-        target &&
-        link.edge ===
-          target.edge
-      ) {
-        const targetDist =
-          link.dir === 1
-            ? target.dist
-            : edge.length -
-              target.dist
-
-        if (
-          targetDist >= dist
-        ) {
-          const take =
-            Math.min(
-              targetDist -
-                dist,
-              maxDistance -
-                travelled,
-            )
-
-          this.net.appendPath(
-            path,
-            link,
-            dist,
-            dist + take,
-          )
-
-          break
-        }
-      }
-
+  
       const remaining =
-        edge.length -
-        dist
-
+        edge.length - dist
+  
       const take =
         Math.min(
           remaining,
-          maxDistance -
-            travelled,
+          maxDistance - travelled,
         )
-
+  
       this.net.appendPath(
         path,
         link,
         dist,
         dist + take,
       )
-
+  
       travelled += take
       dist += take
-
-      if (
-        take < remaining
-      ) {
+  
+      if (take < remaining) {
         break
       }
-
-      if (
-        route.length === 0
-      ) {
+  
+      const vertex =
+        this.net.endVertex(
+          link,
+        )
+  
+      const candidates =
+        this.net.links[
+          vertex
+        ].filter(
+          (candidate) =>
+            !(
+              candidate.edge ===
+                link.edge &&
+              candidate.dir ===
+                -link.dir
+            ),
+        )
+  
+      if (candidates.length === 0) {
         break
       }
-
-      link = route[0]
-      route = route.slice(1)
+  
+      /*
+       * For LEFT / RIGHT, only consume the command
+       * if this junction actually has a turn in
+       * that direction.
+       */
+      let selected: Link | null = null
+  
+      if (turn !== 0) {
+        const hasRequestedTurn =
+          this.hasTurnOptionFrom(
+            candidates,
+            link,
+            turn,
+          )
+  
+        if (hasRequestedTurn) {
+          selected =
+            this.selectLinkFrom(
+              candidates,
+              link,
+              turn,
+            )
+  
+          // The requested turn has now been used.
+          turn = 0
+        } else {
+          /*
+           * No requested turn here.
+           * Continue straight, but KEEP the command.
+           */
+          selected =
+            this.selectLinkFrom(
+              candidates,
+              link,
+              0,
+            )
+        }
+      } else {
+        selected =
+          this.selectLinkFrom(
+            candidates,
+            link,
+            0,
+          )
+      }
+  
+      if (!selected) {
+        break
+      }
+  
+      link = selected
       dist = 0
     }
-
+  
     return path
   }
 
-  private sameLink(
-    a: Link,
-    b: Link,
+  private hasTurnOptionFrom(
+    candidates: Link[],
+    incoming: Link,
+    turn: TurnDirection,
   ): boolean {
-    return (
-      a.edge === b.edge &&
-      a.dir === b.dir
+    if (turn === 0) {
+      return true
+    }
+  
+    const forward =
+      this.net.arrivalHeading(
+        incoming,
+      )
+  
+    return candidates.some(
+      (candidate) => {
+        const outgoing =
+          this.net.exitHeading(
+            candidate,
+          )
+  
+        const cross =
+          forward.x * outgoing.y -
+          forward.y * outgoing.x
+  
+        const dot =
+          forward.x * outgoing.x +
+          forward.y * outgoing.y
+  
+        const angle =
+          Math.atan2(
+            cross,
+            dot,
+          )
+  
+        return turn < 0
+          ? angle < -STRAIGHT_ANGLE
+          : angle > STRAIGHT_ANGLE
+      },
     )
+  }
+
+  /**
+   * Same junction-selection logic as selectLink(),
+   * but works with a simulated link so that the
+   * projection doesn't mutate the real snake.
+   */
+  private selectLinkFrom(
+    candidates: Link[],
+    incoming: Link,
+    turn: TurnDirection,
+  ): Link | null {
+    const forward =
+      this.net.arrivalHeading(
+        incoming,
+      )
+
+    const scored = candidates.map(
+      (candidate) => {
+        const outgoing =
+          this.net.exitHeading(
+            candidate,
+          )
+
+        const cross =
+          forward.x * outgoing.y -
+          forward.y * outgoing.x
+
+        const dot =
+          forward.x * outgoing.x +
+          forward.y * outgoing.y
+
+        return {
+          link: candidate,
+          angle: Math.atan2(
+            cross,
+            dot,
+          ),
+        }
+      },
+    )
+
+    if (scored.length === 0) {
+      return null
+    }
+
+    if (turn === 0) {
+      return scored.reduce(
+        (best, current) =>
+          Math.abs(current.angle) <
+          Math.abs(best.angle)
+            ? current
+            : best,
+      ).link
+    }
+
+    const sideCandidates =
+      scored.filter((item) =>
+        turn < 0
+          ? item.angle <
+            -STRAIGHT_ANGLE
+          : item.angle >
+            STRAIGHT_ANGLE,
+      )
+
+    if (sideCandidates.length > 0) {
+      const desired =
+        turn < 0
+          ? -Math.PI / 2
+          : Math.PI / 2
+
+      return sideCandidates.reduce(
+        (best, current) =>
+          Math.abs(
+            current.angle -
+              desired,
+          ) <
+          Math.abs(
+            best.angle -
+              desired,
+          )
+            ? current
+            : best,
+      ).link
+    }
+
+    const straightCandidates =
+      scored.filter(
+        (item) =>
+          Math.abs(item.angle) <=
+          STRAIGHT_ANGLE,
+      )
+
+    if (
+      straightCandidates.length > 0
+    ) {
+      return straightCandidates.reduce(
+        (best, current) =>
+          Math.abs(current.angle) <
+          Math.abs(best.angle)
+            ? current
+            : best,
+      ).link
+    }
+
+    const desired =
+      turn < 0
+        ? -Math.PI / 2
+        : Math.PI / 2
+
+    return scored.reduce(
+      (best, current) =>
+        Math.abs(
+          current.angle -
+            desired,
+        ) <
+        Math.abs(
+          best.angle -
+            desired,
+        )
+          ? current
+          : best,
+    ).link
   }
 
   private get trailLength(): number {
@@ -708,7 +978,7 @@ export class Snake {
           (s.y -
             this.head.y) **
             2 <
-          r * r
+        r * r
       ) {
         return true
       }

@@ -3,6 +3,7 @@ import { RoadNetwork } from './RoadNetwork'
 import {
   Snake,
   type DeathCause,
+  type TurnDirection,
 } from './Snake'
 import type {
   MapData,
@@ -17,27 +18,60 @@ export type GameState = {
   cause?: DeathCause
 }
 
+function rotationForHeading(
+  heading: Point,
+): number {
+  /*
+   * Rotate the world so the snake's heading
+   * points straight up on screen.
+   */
+  return (
+    -Math.atan2(
+      heading.y,
+      heading.x,
+    ) -
+    Math.PI / 2
+  )
+}
+
+function angleDelta(
+  from: number,
+  to: number,
+): number {
+  let delta = to - from
+
+  while (delta > Math.PI) {
+    delta -= Math.PI * 2
+  }
+
+  while (delta < -Math.PI) {
+    delta += Math.PI * 2
+  }
+
+  return delta
+}
+
 export class Game {
   readonly net: RoadNetwork
+
   food: FoodField
   snake: Snake
   camera: Point
+
   score = 0
   zoomBias = 1
+
   width = 0
   height = 0
   dpr = 1
 
-  private startEdge: number
-
   /**
-   * Pointer relative to the centre of the canvas,
-   * in screen pixels.
+   * Current world rotation used by the renderer.
+   * The renderer rotates the map around the snake.
    */
-  private pointer: Point = {
-    x: 0,
-    y: -1,
-  }
+  viewAngle = 0
+
+  private startEdge: number
 
   private findStartEdge(): number {
     const nearest =
@@ -57,8 +91,9 @@ export class Game {
       const edge =
         this.net.edges[i]
 
-      if (edge.length < 30)
+      if (edge.length < 30) {
         continue
+      }
 
       const aDegree =
         this.net.links[
@@ -92,7 +127,8 @@ export class Game {
 
         distance = Math.min(
           distance,
-          dx * dx + dy * dy,
+          dx * dx +
+            dy * dy,
         )
       }
 
@@ -128,6 +164,11 @@ export class Game {
     this.camera = {
       ...this.snake.head,
     }
+
+    this.viewAngle =
+      rotationForHeading(
+        this.snake.heading,
+      )
   }
 
   reset() {
@@ -145,20 +186,28 @@ export class Game {
     }
 
     this.score = 0
+
+    this.viewAngle =
+      rotationForHeading(
+        this.snake.heading,
+      )
   }
 
-  setPointer(
-    dx: number,
-    dy: number,
+  setTurn(
+    direction: TurnDirection,
   ) {
-    this.pointer = {
-      x: dx,
-      y: dy,
-    }
+    this.snake.setTurn(
+      direction,
+    )
   }
 
-  setBoost(on: boolean) {
+  setBoost(
+    on: boolean,
+    free = false,
+  ) {
     this.snake.boosting = on
+    this.snake.freeBoosting =
+      on && free
   }
 
   get zoom(): number {
@@ -181,28 +230,9 @@ export class Game {
     const { snake } =
       this
 
-    if (!snake.alive)
+    if (!snake.alive) {
       return
-
-    /*
-     * Convert screen-space pointer to
-     * world-space.
-     */
-    const cursorWorld = {
-      x:
-        this.camera.x +
-        this.pointer.x /
-          this.zoom,
-
-      y:
-        this.camera.y +
-        this.pointer.y /
-          this.zoom,
     }
-
-    snake.setCursor(
-      cursorWorld,
-    )
 
     snake.update(dt)
 
@@ -221,8 +251,14 @@ export class Game {
         )
     }
 
+    /*
+     * Follow the snake smoothly.
+     */
     const follow =
-      Math.min(1, dt * 5)
+      Math.min(
+        1,
+        dt * 5,
+      )
 
     this.camera.x +=
       (snake.head.x -
@@ -233,6 +269,35 @@ export class Game {
       (snake.head.y -
         this.camera.y) *
       follow
+
+    /*
+     * Rotate the map so the snake always
+     * points toward the top of the screen.
+     *
+     * Using exponential smoothing means a
+     * junction turn doesn't cause a violent
+     * instant rotation.
+     */
+    const desiredAngle =
+      rotationForHeading(
+        snake.heading,
+      )
+
+    const delta =
+      angleDelta(
+        this.viewAngle,
+        desiredAngle,
+      )
+
+    const rotationFollow =
+      1 -
+      Math.exp(
+        -dt * 1.5,
+      )
+
+    this.viewAngle +=
+      delta *
+      rotationFollow
   }
 
   get state(): GameState {

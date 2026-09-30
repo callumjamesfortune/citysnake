@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/components/gamecanvas.tsx","./src/game/food.ts","./src/game/game.ts","./src/game/roadnetwork.ts","./src/game/snake.ts","./src/game/osm.ts","./src/game/random.ts","./src/game/renderer.ts","./src/game/types.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/gamecanvas.tsx","./src/game/food.ts","./src/game/game.ts","./src/game/roadnetwork.ts","./src/game/snake.ts","./src/game/osm.ts","./src/game/random.ts","./src/game/renderer.ts","./src/game/types.ts","./scripts/osm-load.ts"],"version":"5.9.3"}

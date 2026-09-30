@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Game, type GameState } from '../game/Game'
-import { loadMapData, searchPlaces, type Place } from '../game/osm'
+import {
+  CITY_MAPS,
+  loadBundledMap,
+  type CityMap,
+} from '../game/osm'
 import { MapLayer, render } from '../game/renderer'
 import type { MapData } from '../game/types'
 
@@ -10,16 +14,15 @@ export default function GameCanvas() {
   const [game, setGame] = useState<Game>()
   const [error, setError] = useState<string>()
 
-  const [query, setQuery] = useState('')
-  const [places, setPlaces] = useState<Place[]>([])
-  const [selectedPlace, setSelectedPlace] = useState<Place>()
-  const [searching, setSearching] = useState(false)
-  const [loadingMap, setLoadingMap] = useState(false)
+  const [selectedCity, setSelectedCity] =
+    useState<CityMap>(CITY_MAPS[0])
 
+  const [loadingMap, setLoadingMap] = useState(false)
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [loadingMessage, setLoadingMessage] = useState('')
 
-  const [loadedMap, setLoadedMap] = useState<MapData>()
+  const [loadedMap, setLoadedMap] =
+    useState<MapData>()
 
   const [hud, setHud] = useState<GameState>({
     score: 0,
@@ -27,81 +30,58 @@ export default function GameCanvas() {
     alive: true,
   })
 
-  // Search for towns
-  useEffect(() => {
-    if (query.trim().length < 2) {
-      setPlaces([])
-      return
+  const startGame = async () => {
+    try {
+      setError(undefined)
+      setLoadedMap(undefined)
+
+      setLoadingMap(true)
+      setLoadingProgress(0)
+      setLoadingMessage(
+        `Loading ${selectedCity.name}…`,
+      )
+
+      const data = await loadBundledMap(
+        selectedCity,
+        (message) => {
+          console.log(message)
+          setLoadingMessage(message)
+
+          const lower =
+            message.toLowerCase()
+
+          if (lower.includes('loading')) {
+            setLoadingProgress(20)
+          } else if (
+            lower.includes('reading')
+          ) {
+            setLoadingProgress(70)
+          } else if (
+            lower.includes('ready')
+          ) {
+            setLoadingProgress(100)
+          }
+        },
+      )
+
+      setLoadingProgress(100)
+      setLoadingMessage('Map ready!')
+      setLoadedMap(data)
+    } catch (e) {
+      console.error(
+        'Map loading failed:',
+        e,
+      )
+
+      setError(
+        e instanceof Error
+          ? e.message
+          : 'Could not load map',
+      )
+    } finally {
+      setLoadingMap(false)
     }
-
-    const controller = new AbortController()
-
-    const timer = window.setTimeout(async () => {
-      try {
-        setSearching(true)
-
-        const results = await searchPlaces(query, controller.signal)
-        setPlaces(results.slice(0, 3))
-      } catch (e) {
-        if ((e as Error).name !== 'AbortError') {
-          console.error(e)
-        }
-      } finally {
-        setSearching(false)
-      }
-    }, 400)
-
-    return () => {
-      clearTimeout(timer)
-      controller.abort()
-    }
-  }, [query])
-
-const startGame = async () => {
-  if (!selectedPlace) return
-
-  try {
-    setError(undefined)
-    setLoadedMap(undefined)
-    setLoadingMap(true)
-    setLoadingProgress(0)
-    setLoadingMessage('Starting…')
-
-    const data = await loadMapData(
-      selectedPlace,
-      1200,
-      (message) => {
-        console.log(message)
-        setLoadingMessage(message)
-
-        const lower = message.toLowerCase()
-
-        if (lower.includes('checking')) {
-          setLoadingProgress(5)
-        } else if (lower.includes('saved')) {
-          setLoadingProgress(100)
-        } else if (lower.includes('downloading')) {
-          setLoadingProgress(35)
-        } else if (lower.includes('building')) {
-          setLoadingProgress(70)
-        } else if (lower.includes('saving')) {
-          setLoadingProgress(90)
-        } else if (lower.includes('ready')) {
-          setLoadingProgress(100)
-        }
-      },
-    )
-
-    setLoadingProgress(100)
-    setLoadingMessage('Map ready!')
-    setLoadedMap(data)
-  } catch (e) {
-    console.error('Map loading failed:', e)
-    setError((e as Error).message)
-  } finally {
-    setLoadingMap(false)
   }
-}
 
   // Game loop
   useEffect(() => {
@@ -112,73 +92,160 @@ const startGame = async () => {
     const layer = new MapLayer(game.data)
 
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      const dpr = Math.min(
+        window.devicePixelRatio || 1,
+        2,
+      )
 
       game.dpr = dpr
       game.width = window.innerWidth
       game.height = window.innerHeight
 
-      canvas.width = game.width * dpr
-      canvas.height = game.height * dpr
+      canvas.width =
+        game.width * dpr
 
-      canvas.style.width = `${game.width}px`
-      canvas.style.height = `${game.height}px`
+      canvas.height =
+        game.height * dpr
+
+      canvas.style.width =
+        `${game.width}px`
+
+      canvas.style.height =
+        `${game.height}px`
     }
 
     resize()
-    window.addEventListener('resize', resize)
 
-    const aim = (clientX: number, clientY: number) =>
-      game.setPointer(
-        clientX - game.width / 2,
-        clientY - game.height / 2,
-      )
+    window.addEventListener(
+      'resize',
+      resize,
+    )
 
-    const onPointerMove = (e: PointerEvent) =>
-      aim(e.clientX, e.clientY)
-
-    const onPointerDown = (e: PointerEvent) => {
-      aim(e.clientX, e.clientY)
-      game.setBoost(true)
-    }
-
-    const onPointerUp = () => game.setBoost(false)
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        game.setBoost(e.type === 'keydown')
+    const onKey = (
+      e: KeyboardEvent,
+    ) => {
+      /*
+       * Prevent the browser from scrolling
+       * when using the arrow keys or space.
+       */
+      if (
+        e.code === 'ArrowLeft' ||
+        e.code === 'ArrowRight' ||
+        e.code === 'ArrowUp' ||
+        e.code === 'Space'
+      ) {
+        e.preventDefault()
       }
+
+      /*
+       * Ignore key-repeat for steering.
+       * Each press is one steering command.
+       */
+      if (
+        e.type === 'keydown' &&
+        !e.repeat
+      ) {
+        switch (e.code) {
+          case 'ArrowLeft':
+          case 'KeyA':
+            game.setTurn(-1)
+            break
+
+          case 'ArrowUp':
+          case 'KeyW':
+            game.setTurn(0)
+            break
+
+          case 'ArrowRight':
+          case 'KeyD':
+            game.setTurn(1)
+            break
+        }
+      }
+
+      /*
+ * Space = normal boost (uses length)
+ * F = free boost (does not use length)
+ */
+if (e.code === 'Space') {
+  game.setBoost(
+    e.type === 'keydown',
+    false,
+  )
+}
+
+if (e.code === 'KeyF') {
+  game.setBoost(
+    e.type === 'keydown',
+    true,
+  )
+}
     }
 
-    const onWheel = (e: WheelEvent) => {
+    const onWheel = (
+      e: WheelEvent,
+    ) => {
       e.preventDefault()
 
-      game.zoomBias = Math.max(
-        0.4,
-        Math.min(
-          2.5,
-          game.zoomBias * (e.deltaY > 0 ? 0.9 : 1.1),
-        ),
-      )
+      game.zoomBias =
+        Math.max(
+          0.4,
+          Math.min(
+            2.5,
+            game.zoomBias *
+              (e.deltaY > 0
+                ? 0.9
+                : 1.1),
+          ),
+        )
     }
 
-    window.addEventListener('pointermove', onPointerMove)
-    window.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('pointerup', onPointerUp)
-    window.addEventListener('keydown', onKey)
-    window.addEventListener('keyup', onKey)
-    canvas.addEventListener('wheel', onWheel, { passive: false })
+    const onBlur = () => {
+      game.setBoost(false)
+    }
+
+    window.addEventListener(
+      'keydown',
+      onKey,
+    )
+
+    window.addEventListener(
+      'keyup',
+      onKey,
+    )
+
+    window.addEventListener(
+      'blur',
+      onBlur,
+    )
+
+    canvas.addEventListener(
+      'wheel',
+      onWheel,
+      { passive: false },
+    )
 
     let raf = 0
     let last = performance.now()
     let hudTimer = 0
 
-    const frame = (now: number) => {
-      const dt = Math.min((now - last) / 1000, 0.05)
+    const frame = (
+      now: number,
+    ) => {
+      const dt = Math.min(
+        (now - last) / 1000,
+        0.05,
+      )
+
       last = now
 
       game.update(dt)
-      render(ctx, game, layer)
+
+      render(
+        ctx,
+        game,
+        layer,
+      )
 
       hudTimer += dt
 
@@ -187,22 +254,44 @@ const startGame = async () => {
         setHud(game.state)
       }
 
-      raf = requestAnimationFrame(frame)
+      raf =
+        requestAnimationFrame(
+          frame,
+        )
     }
 
-    raf = requestAnimationFrame(frame)
+    raf =
+      requestAnimationFrame(
+        frame,
+      )
 
     return () => {
       cancelAnimationFrame(raf)
 
-      window.removeEventListener('resize', resize)
-      window.removeEventListener('pointermove', onPointerMove)
-      window.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('pointerup', onPointerUp)
-      window.removeEventListener('keydown', onKey)
-      window.removeEventListener('keyup', onKey)
+      window.removeEventListener(
+        'resize',
+        resize,
+      )
 
-      canvas.removeEventListener('wheel', onWheel)
+      window.removeEventListener(
+        'keydown',
+        onKey,
+      )
+
+      window.removeEventListener(
+        'keyup',
+        onKey,
+      )
+
+      window.removeEventListener(
+        'blur',
+        onBlur,
+      )
+
+      canvas.removeEventListener(
+        'wheel',
+        onWheel,
+      )
     }
   }, [game])
 
@@ -213,97 +302,82 @@ const startGame = async () => {
         <div className="start-screen">
           <h1>CitySnake</h1>
 
-          <p>Choose a location to play</p>
+          <p>
+            Choose a city to play
+          </p>
 
-          <div className="search-box">
-
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value)
-                setSelectedPlace(undefined)
-                setError(undefined)
-              }}
-              placeholder="Search for a town..."
-              autoFocus
-            />
-
-            <button onClick={() => {
-              setQuery('')
-              setSelectedPlace(undefined)
-              setPlaces([])
-              setError(undefined)
-            }}>✕</button>
-
+          <div className="city-list">
+            {CITY_MAPS.map((city) => (
+              <button
+                key={city.id}
+                className={
+                  selectedCity.id === city.id
+                    ? 'city-button selected'
+                    : 'city-button'
+                }
+                onClick={() => {
+                  setSelectedCity(city)
+                  setLoadedMap(undefined)
+                  setError(undefined)
+                }}
+                disabled={loadingMap}
+              >
+                {city.name}
+              </button>
+            ))}
           </div>
 
-          {searching && <p>Searching…</p>}
+          <button
+            className="play-button"
+            onClick={startGame}
+            disabled={loadingMap}
+          >
+            {loadingMap
+              ? 'Loading map…'
+              : `Play in ${selectedCity.name}`}
+          </button>
 
-          {!selectedPlace && places.length > 0 && (
-            <div className="place-list">
-              {places.map((place, index) => (
-                <button
-                  key={`${place.lat}-${place.lon}-${index}`}
-                  className="place-button"
-                  onClick={() => {
-                    setSelectedPlace(place)
-                    setQuery(place.name)
-                    setPlaces([])
+          {loadingMap && (
+            <div className="loading-box">
+              <div className="progress-track">
+                <div
+                  className="progress-bar"
+                  style={{
+                    width: `${loadingProgress}%`,
                   }}
-                >
-                  {place.name}
-                </button>
-              ))}
+                />
+              </div>
+
+              <div className="loading-percent">
+                {loadingProgress}%
+              </div>
+
+              <p>{loadingMessage}</p>
             </div>
           )}
 
-          {selectedPlace && (
-            <button
-              className="play-button"
-              onClick={startGame}
-              disabled={loadingMap}
-            >
-              {loadingMap
-                ? 'Loading map…'
-                : `Play in ${selectedPlace.name}`}
-            </button>
-          )}
+          {loadedMap &&
+            !loadingMap && (
+              <div className="map-ready">
+                <p>
+                  ✓ {selectedCity.name}{' '}
+                  is ready to play
+                </p>
 
-          {loadingMap && (
-  <div className="loading-box">
-    <div className="progress-track">
-      <div
-        className="progress-bar"
-        style={{ width: `${loadingProgress}%` }}
-      />
-    </div>
+                <button
+                  className="play-button"
+                  onClick={() => {
+                    setGame(
+                      new Game(loadedMap),
+                    )
 
-    <div className="loading-percent">
-      {loadingProgress}%
-    </div>
-
-    <p>{loadingMessage}</p>
-  </div>
-
-  
-)}
-
-{loadedMap && !loadingMap && (
-  <div className="map-ready">
-    <p>✓ {selectedPlace?.name} is ready to play</p>
-
-    <button
-      className="play-button"
-      onClick={() => {
-        setGame(new Game(loadedMap))
-        setLoadedMap(undefined)
-      }}
-    >
-      Play
-    </button>
-  </div>
-)}
+                    setLoadedMap(undefined)
+                  }}
+                >
+                  Play
+                </button>
+              </div>
+            )}
 
           {error && (
             <p className="error">
@@ -329,15 +403,24 @@ const startGame = async () => {
 
         {hud.road && (
           <>
-            <span style={{ opacity: 0.85 }}>
+            <span
+              style={{
+                opacity: 0.85,
+              }}
+            >
               {hud.road}
             </span>
             <br />
           </>
         )}
 
-        <span style={{ opacity: 0.65 }}>
-          steer: aim with mouse · boost: hold click / space · zoom: wheel
+        <span
+          style={{
+            opacity: 0.65,
+          }}
+        >
+          steer: WASD / arrows · boost:
+          space · zoom: wheel
         </span>
       </div>
 
@@ -350,7 +433,9 @@ const startGame = async () => {
                 : 'You crashed into yourself'}
             </h2>
 
-            <p>Score {hud.score}</p>
+            <p>
+              Score {hud.score}
+            </p>
 
             <button
               onClick={() => {

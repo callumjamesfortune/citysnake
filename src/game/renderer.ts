@@ -532,6 +532,7 @@ export function render(
     zoom,
     camera,
     dpr,
+    viewAngle,
   } = game
 
   ctx.setTransform(
@@ -544,6 +545,7 @@ export function render(
   )
 
   ctx.fillStyle = COLORS.land
+
   ctx.fillRect(
     0,
     0,
@@ -551,10 +553,18 @@ export function render(
     height,
   )
 
+  /*
+   * Everything below this point is in world space.
+   *
+   * The rotation happens around the centre of
+   * the screen, so the snake/map rotate together.
+   */
   ctx.translate(
     width / 2,
     height / 2,
   )
+
+  ctx.rotate(viewAngle)
 
   ctx.scale(
     zoom,
@@ -566,27 +576,58 @@ export function render(
     -camera.y,
   )
 
+  /*
+   * Because the viewport is rotated, its world-space
+   * bounding box is larger than width/zoom by height/zoom.
+   *
+   * Calculate the exact axis-aligned extents needed
+   * to cover the rotated rectangle.
+   */
+  const halfW =
+    width / 2 / zoom
+
+  const halfH =
+    height / 2 / zoom
+
+  const cos =
+    Math.abs(
+      Math.cos(viewAngle),
+    )
+
+  const sin =
+    Math.abs(
+      Math.sin(viewAngle),
+    )
+
+  const extentX =
+    halfW * cos +
+    halfH * sin
+
+  const extentY =
+    halfW * sin +
+    halfH * cos
+
   const pad = 40
 
   const bounds: Bounds = {
     minX:
       camera.x -
-      width / 2 / zoom -
+      extentX -
       pad,
 
     minY:
       camera.y -
-      height / 2 / zoom -
+      extentY -
       pad,
 
     maxX:
       camera.x +
-      width / 2 / zoom +
+      extentX +
       pad,
 
     maxY:
       camera.y +
-      height / 2 / zoom +
+      extentY +
       pad,
   }
 
@@ -650,7 +691,7 @@ function drawSnake(
 
   // Project the route the snake will actually take.
   const projected =
-    snake.getProjectedPath(150)
+    snake.getProjectedPath(500)
 
   if (projected.length > 1) {
     ctx.save()
